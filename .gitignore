@@ -6,6 +6,9 @@ dist/
 .next/
 *.tsbuildinfo
 
+# Netlify
+.netlify/
+
 # Environment / secrets — never commit credentials
 .env
 .env.*
