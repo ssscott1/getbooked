@@ -1,0 +1,15 @@
+{
+  "name": "@getbooked/db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Canonical data model (Prisma + PostgreSQL, AU region)",
+  "scripts": {
+    "validate": "DATABASE_URL=postgresql://placeholder/validate prisma validate",
+    "format": "prisma format",
+    "typecheck": "DATABASE_URL=postgresql://placeholder/validate prisma validate",
+    "test": "echo 'no tests in db package'"
+  },
+  "devDependencies": {
+    "prisma": "^6.19.0"
+  }
+}

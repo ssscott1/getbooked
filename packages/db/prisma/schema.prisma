@@ -1,0 +1,635 @@
+// GetBooked — canonical data model (brief §11 first-class entities).
+// PostgreSQL, AU region only in deployed environments (§10.1).
+// Lifecycle rules and ERD: docs/data-model.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────── Practice side ─────────────────────────
+
+model Practice {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique // SEO profile URL
+  abn         String?
+  phone       String?
+  email       String?
+  websiteUrl  String?
+  bio         String?
+  // Trust rules: no paid-placement field exists by design (§10.1).
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  locations        Location[]
+  practitioners    Practitioner[]
+  appointmentTypes AppointmentType[]
+  feeSchedules     FeeSchedule[]
+  users            PracticeUser[]
+  intakeForms      IntakeForm[]
+  referrals        Referral[]
+  appointments     Appointment[]
+  waitlistEntries  WaitlistEntry[]
+  messageJourneys  MessageJourney[]
+  subscriptions    Subscription[]
+  syncConnection   SyncConnection?
+  auditLogs        AuditLog[]
+}
+
+model Location {
+  id              String  @id @default(uuid())
+  practiceId      String
+  practice        Practice @relation(fields: [practiceId], references: [id])
+  name            String
+  addressLine1    String
+  addressLine2    String?
+  suburb          String
+  state           String
+  postcode        String
+  timezone        String  @default("Australia/Sydney")
+  latitude        Float?
+  longitude       Float?
+  wheelchairAccess Boolean @default(false)
+  parkingNotes    String?
+  transportNotes  String?
+  pmsExternalId   String? // Xestro location id
+
+  slots        AvailabilitySlot[]
+  appointments Appointment[]
+
+  @@index([practiceId])
+  @@index([postcode])
+}
+
+model Practitioner {
+  id              String  @id @default(uuid())
+  practiceId      String
+  practice        Practice @relation(fields: [practiceId], references: [id])
+  title           String?
+  firstName       String
+  lastName        String
+  slug            String  @unique // SEO profile URL
+  specialty       String
+  subSpecialties  String[]
+  specialInterests String[]
+  proceduresOffered String[]
+  languages       String[]
+  gender          String?
+  bio             String?
+  photoUrl        String?
+  ahpraNumber     String?
+  hospitalAffiliations String[]
+  telehealth      Boolean @default(false)
+  acceptsNewPatients Boolean @default(true)
+  referralRequired Boolean @default(true)
+  active          Boolean @default(true)
+  pmsExternalId   String? // Xestro practitioner id
+  // Per-practitioner exposure rules (§7.2)
+  maxNewPatientsPerSession Int?
+  minNoticeHours  Int     @default(24)
+  maxAdvanceDays  Int     @default(90)
+
+  slots        AvailabilitySlot[]
+  appointments Appointment[]
+
+  @@index([practiceId])
+  @@index([specialty])
+}
+
+model AppointmentType {
+  id              String  @id @default(uuid())
+  practiceId      String
+  practice        Practice @relation(fields: [practiceId], references: [id])
+  name            String  // new patient consult, review, procedure, telehealth, post-op
+  durationMinutes Int
+  telehealth      Boolean @default(false)
+  onlineBookable  Boolean @default(true)
+  bookingMode     BookingMode @default(REQUEST) // permanent per-type setting (§8.2)
+  triageBeforeConfirm Boolean @default(false)   // §7.3
+  preparationInstructions String? // fasting, medication holds (§5.5)
+  pmsExternalId   String?
+
+  slots           AvailabilitySlot[]
+  appointments    Appointment[]
+  feeSchedules    FeeSchedule[]
+  messageJourneys MessageJourney[]
+
+  @@index([practiceId])
+}
+
+enum BookingMode {
+  INSTANT // live-sync confirm
+  REQUEST // practice one-click confirm
+}
+
+model PracticeUser {
+  id         String   @id @default(uuid())
+  practiceId String
+  practice   Practice @relation(fields: [practiceId], references: [id])
+  email      String   @unique
+  name       String
+  role       PracticeRole
+  mfaEnrolled Boolean @default(false)
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  @@index([practiceId])
+}
+
+enum PracticeRole {
+  OWNER
+  PRACTICE_MANAGER
+  RECEPTION
+  PRACTITIONER_READ_ONLY
+}
+
+// ───────────────────────── Patient side ─────────────────────────
+
+model Patient {
+  id        String   @id @default(uuid())
+  // Guest checkout allowed: account fields nullable until claimed (§5.4)
+  phone     String   @unique // SMS OTP identity
+  email     String?
+  firstName String
+  lastName  String
+  dateOfBirth DateTime?
+  // Field-level encrypted (KMS envelope) — never indexed, never logged (§10.2)
+  medicareNumberEnc String?
+  dvaNumberEnc      String?
+  healthFundEnc     String?
+  interpreterNeeded Boolean @default(false)
+  preferredLanguage String?
+  accountClaimedAt  DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  dependents      Dependent[]
+  appointments    Appointment[]
+  referrals       Referral[]
+  waitlistEntries WaitlistEntry[]
+  intakeResponses IntakeFormResponse[]
+}
+
+model Dependent {
+  id          String   @id @default(uuid())
+  guardianId  String
+  guardian    Patient  @relation(fields: [guardianId], references: [id])
+  firstName   String
+  lastName    String
+  dateOfBirth DateTime
+  relationship String  // child, parent, ...
+  medicareNumberEnc String?
+
+  appointments Appointment[]
+  referrals    Referral[]
+
+  @@index([guardianId])
+}
+
+// ───────────────────────── Referral (first-class, §5.2/§6) ─────────────────────────
+
+model Referral {
+  id         String         @id @default(uuid())
+  patientId  String?
+  patient    Patient?       @relation(fields: [patientId], references: [id])
+  dependentId String?
+  dependent  Dependent?     @relation(fields: [dependentId], references: [id])
+  practiceId String?        // addressed-to practice, when known
+  practice   Practice?      @relation(fields: [practiceId], references: [id])
+  status     ReferralStatus @default(DRAFT)
+  source     ReferralSource @default(PATIENT_UPLOAD)
+
+  // Human-verified values (authoritative once verifiedAt is set)
+  referringDoctorName String?
+  referringProviderNumber String?
+  referralDate        DateTime?
+  periodMonths        Int?     // 3 | 12 | null = indefinite
+  expiresAt           DateTime? // derived deterministically — never by AI
+  specialty           String?
+
+  // Raw AI extraction (pre-fill only; never trusted without human confirm)
+  extractedJson       Json?
+  extractionModel     String?
+  extractionConfidence Float?
+  verifiedAt          DateTime?
+  verifiedByUserId    String?
+
+  triageUrgency  TriageUrgency?
+  triagedAt      DateTime?
+
+  documents    Document[]
+  appointments Appointment[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([patientId])
+  @@index([practiceId, status])
+  @@index([expiresAt])
+}
+
+enum ReferralStatus {
+  DRAFT
+  UPLOADED
+  EXTRACTED
+  VERIFIED
+  ACTIVE
+  EXPIRING
+  EXPIRED
+  REJECTED
+}
+
+enum ReferralSource {
+  PATIENT_UPLOAD
+  GP_SECURE_MESSAGING // Phase 2 — Medical Objects / HealthLink via Xestro
+  PRACTICE_ENTERED
+}
+
+enum TriageUrgency {
+  URGENT
+  SOON
+  ROUTINE
+}
+
+model Document {
+  id          String  @id @default(uuid())
+  referralId  String?
+  referral    Referral? @relation(fields: [referralId], references: [id])
+  kind        DocumentKind
+  s3Key       String  // encrypted bucket, AU region; pre-signed access only
+  contentType String
+  sizeBytes   Int
+  uploadedAt  DateTime @default(now())
+  pmsAttachedAt DateTime? // pushed to Xestro patient file
+
+  @@index([referralId])
+}
+
+enum DocumentKind {
+  REFERRAL
+  INTAKE_RESPONSE
+  OTHER
+}
+
+// ───────────────────────── Booking ─────────────────────────
+
+// Cached projection of PMS availability (live-sync) or platform-mastered
+// (managed-calendar). Never authoritative in live-sync mode — Xestro wins.
+model AvailabilitySlot {
+  id                String   @id @default(uuid())
+  practitionerId    String
+  practitioner      Practitioner @relation(fields: [practitionerId], references: [id])
+  locationId        String
+  location          Location @relation(fields: [locationId], references: [id])
+  appointmentTypeId String
+  appointmentType   AppointmentType @relation(fields: [appointmentTypeId], references: [id])
+  startsAt          DateTime
+  endsAt            DateTime
+  pmsExternalId     String?
+  syncedAt          DateTime @default(now())
+
+  appointments Appointment[]
+
+  @@unique([practitionerId, startsAt, appointmentTypeId])
+  @@index([practitionerId, startsAt])
+  @@index([startsAt]) // next-available sorting
+}
+
+model Appointment {
+  id                String   @id @default(uuid())
+  practiceId        String
+  practice          Practice @relation(fields: [practiceId], references: [id])
+  practitionerId    String
+  practitioner      Practitioner @relation(fields: [practitionerId], references: [id])
+  locationId        String
+  location          Location @relation(fields: [locationId], references: [id])
+  appointmentTypeId String
+  appointmentType   AppointmentType @relation(fields: [appointmentTypeId], references: [id])
+  slotId            String?
+  slot              AvailabilitySlot? @relation(fields: [slotId], references: [id])
+  patientId         String?
+  patient           Patient? @relation(fields: [patientId], references: [id])
+  dependentId       String?
+  dependent         Dependent? @relation(fields: [dependentId], references: [id])
+  referralId        String?
+  referral          Referral? @relation(fields: [referralId], references: [id])
+
+  status     AppointmentStatus @default(REQUESTED)
+  source     AppointmentSource @default(MARKETPLACE)
+  startsAt   DateTime
+  endsAt     DateTime
+  telehealth Boolean @default(false)
+  telehealthUrl String?
+
+  cancellationReason String?
+  declineMessage     String?
+  requestExpiresAt   DateTime? // request-mode auto-expiry
+
+  idempotencyKey String?  @unique // PMS write idempotency
+  pmsExternalId  String?
+
+  feeEstimate FeeEstimate?
+  intakeResponse IntakeFormResponse?
+  messages    Message[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([practiceId, status])
+  @@index([patientId])
+  @@index([startsAt])
+}
+
+enum AppointmentStatus {
+  REQUESTED
+  TRIAGED
+  CONFIRMED
+  DECLINED
+  CANCELLED
+  NO_SHOW
+  COMPLETED
+  EXPIRED
+}
+
+enum AppointmentSource {
+  MARKETPLACE
+  WIDGET
+  PHONE
+  PMS
+}
+
+// ───────────────────────── Waitlist (§5.4 backfill) ─────────────────────────
+
+model WaitlistEntry {
+  id             String   @id @default(uuid())
+  practiceId     String
+  practice       Practice @relation(fields: [practiceId], references: [id])
+  patientId      String
+  patient        Patient  @relation(fields: [patientId], references: [id])
+  practitionerId String?
+  appointmentTypeId String?
+  status         WaitlistStatus @default(ACTIVE)
+  urgency        TriageUrgency?
+  earliestAcceptable DateTime?
+  offeredSlotId  String?
+  offerExpiresAt DateTime? // 15-min exclusive claim window
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([practiceId, status])
+}
+
+enum WaitlistStatus {
+  ACTIVE
+  OFFERED
+  CLAIMED
+  LAPSED
+  WITHDRAWN
+}
+
+// ───────────────────────── Fees (§5.3 informed financial consent) ─────────────────────────
+
+model FeeSchedule {
+  id                String  @id @default(uuid())
+  practiceId        String
+  practice          Practice @relation(fields: [practiceId], references: [id])
+  appointmentTypeId String
+  appointmentType   AppointmentType @relation(fields: [appointmentTypeId], references: [id])
+  consultationFeeCents   Int?
+  medicareRebateCents    Int?
+  estimatedGapCents      Int?
+  depositCents           Int?
+  cancellationPolicy     String?
+  feeNotListed           Boolean @default(false)
+  feeNotListedExplanation String? // required when feeNotListed (§5.3)
+  lastVerifiedAt         DateTime @default(now()) // staleness stamp
+
+  estimates FeeEstimate[]
+
+  @@unique([practiceId, appointmentTypeId])
+}
+
+// Immutable snapshot of what the patient was shown at booking time.
+model FeeEstimate {
+  id            String  @id @default(uuid())
+  appointmentId String  @unique
+  appointment   Appointment @relation(fields: [appointmentId], references: [id])
+  feeScheduleId String?
+  feeSchedule   FeeSchedule? @relation(fields: [feeScheduleId], references: [id])
+  consultationFeeCents Int?
+  medicareRebateCents  Int?
+  estimatedGapCents    Int?
+  depositCents         Int?
+  disclosedAt   DateTime @default(now())
+}
+
+// ───────────────────────── Intake forms (§5.4) ─────────────────────────
+
+model IntakeForm {
+  id         String   @id @default(uuid())
+  practiceId String
+  practice   Practice @relation(fields: [practiceId], references: [id])
+  name       String
+  schemaJson Json     // configurable per practice
+  active     Boolean  @default(true)
+
+  responses IntakeFormResponse[]
+
+  @@index([practiceId])
+}
+
+model IntakeFormResponse {
+  id            String  @id @default(uuid())
+  intakeFormId  String
+  intakeForm    IntakeForm @relation(fields: [intakeFormId], references: [id])
+  appointmentId String  @unique
+  appointment   Appointment @relation(fields: [appointmentId], references: [id])
+  patientId     String
+  patient       Patient @relation(fields: [patientId], references: [id])
+  answersJson   Json
+  completedAt   DateTime?
+  pmsSyncedAt   DateTime? // pushed to Xestro on completion
+}
+
+// ───────────────────────── Communications (§5.5 / §7.4) ─────────────────────────
+
+model MessageJourney {
+  id                String  @id @default(uuid())
+  practiceId        String
+  practice          Practice @relation(fields: [practiceId], references: [id])
+  appointmentTypeId String?
+  appointmentType   AppointmentType? @relation(fields: [appointmentTypeId], references: [id])
+  name              String
+  stepsJson         Json    // ordered steps: trigger offset, channel, template
+  active            Boolean @default(true)
+
+  messages Message[]
+
+  @@index([practiceId])
+}
+
+model Message {
+  id            String  @id @default(uuid())
+  journeyId     String?
+  journey       MessageJourney? @relation(fields: [journeyId], references: [id])
+  appointmentId String?
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+  channel       MessageChannel
+  direction     MessageDirection @default(OUTBOUND)
+  templateKey   String?
+  body          String
+  status        MessageStatus @default(QUEUED)
+  scheduledFor  DateTime?
+  sentAt        DateTime?
+  // Two-way confirm: inbound YES/NO replies are linked here and write
+  // appointment status back (§5.5)
+  inReplyToId   String?
+  createdAt     DateTime @default(now())
+
+  @@index([appointmentId])
+  @@index([status, scheduledFor])
+}
+
+enum MessageChannel {
+  SMS
+  EMAIL
+  PUSH
+}
+
+enum MessageDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum MessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  RECEIVED
+}
+
+// ───────────────────────── Billing (§12) ─────────────────────────
+
+model Subscription {
+  id               String   @id @default(uuid())
+  practiceId       String
+  practice         Practice @relation(fields: [practiceId], references: [id])
+  tier             SubscriptionTier
+  practitionerSeats Int     @default(1)
+  billingInterval  BillingInterval @default(MONTHLY)
+  stripeCustomerId String?
+  stripeSubscriptionId String? @unique
+  trialEndsAt      DateTime?
+  status           SubscriptionStatus @default(TRIALING)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([practiceId])
+}
+
+enum SubscriptionTier {
+  CORE
+  PRO
+  GROUP
+}
+
+enum BillingInterval {
+  MONTHLY
+  ANNUAL
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+}
+
+// ───────────────────────── Sync (§8.3) ─────────────────────────
+
+model SyncConnection {
+  id            String   @id @default(uuid())
+  practiceId    String   @unique
+  practice      Practice @relation(fields: [practiceId], references: [id])
+  mode          SyncMode @default(REQUEST)
+  pmsVendor     String   @default("xestro")
+  // OAuth client credentials reference (secrets manager key, never the secret)
+  credentialRef String?
+  healthy       Boolean  @default(true)
+  lastReadAt    DateTime?
+  lastWriteAt   DateTime?
+  lastWebhookAt DateTime?
+  dlqDepth      Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  events SyncEvent[]
+}
+
+enum SyncMode {
+  LIVE
+  MANAGED_CALENDAR
+  REQUEST
+}
+
+model SyncEvent {
+  id           String   @id @default(uuid())
+  connectionId String
+  connection   SyncConnection @relation(fields: [connectionId], references: [id])
+  direction    SyncDirection
+  kind         String   // availability.read, appointment.create, webhook.appointment.cancelled, ...
+  externalEventId String? @unique // webhook dedupe
+  payloadJson  Json?
+  status       SyncEventStatus @default(PENDING)
+  attempts     Int      @default(0)
+  lastError    String?
+  createdAt    DateTime @default(now())
+  processedAt  DateTime?
+
+  @@index([connectionId, status])
+}
+
+enum SyncDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum SyncEventStatus {
+  PENDING
+  PROCESSED
+  FAILED
+  DEAD_LETTER
+}
+
+// ───────────────────────── Audit (§10.2 — append-only) ─────────────────────────
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorType  ActorType
+  actorId    String
+  action     String   // PATIENT_RECORD_READ, SETTINGS_CHANGED, IMPERSONATION_START, ...
+  entityType String
+  entityId   String
+  practiceId String?
+  practice   Practice? @relation(fields: [practiceId], references: [id])
+  patientId  String?
+  metadataJson Json?
+  createdAt  DateTime @default(now())
+
+  @@index([practiceId, createdAt])
+  @@index([patientId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+enum ActorType {
+  PRACTICE_USER
+  PATIENT
+  PLATFORM_ADMIN
+  SYSTEM
+}

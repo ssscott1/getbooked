@@ -1,0 +1,23 @@
+{
+  "name": "@getbooked/ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude API integration: referral document extraction (structured outputs, vision) and search synonym mapping. All outputs human-confirmable; never auto-actioning clinical decisions.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.0"
+  }
+}
