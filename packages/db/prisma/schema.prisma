@@ -8,7 +8,10 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  // Runtime connection — with Supabase this is the Supavisor pooled URL
+  // (port 6543, ?pgbouncer=true). Migrations need the direct connection.
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ───────────────────────── Practice side ─────────────────────────

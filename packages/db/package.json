@@ -4,9 +4,11 @@
   "private": true,
   "description": "Canonical data model (Prisma + PostgreSQL, AU region)",
   "scripts": {
-    "validate": "DATABASE_URL=postgresql://placeholder/validate prisma validate",
+    "validate": "DATABASE_URL=postgresql://placeholder/validate DIRECT_URL=postgresql://placeholder/validate prisma validate",
     "format": "prisma format",
-    "typecheck": "DATABASE_URL=postgresql://placeholder/validate prisma validate",
+    "typecheck": "DATABASE_URL=postgresql://placeholder/validate DIRECT_URL=postgresql://placeholder/validate prisma validate",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
     "test": "echo 'no tests in db package'"
   },
   "devDependencies": {

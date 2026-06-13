@@ -37,7 +37,7 @@ Two surfaces, one backend, with the PMS integration isolated behind an interface
 |---|---|---|
 | Frontend | Next.js + TypeScript + Tailwind | SSR marketplace pages for SEO (`schema.org/Physician` markup); same framework for portal. |
 | Backend | NestJS modular monolith | Modules map 1:1 to domains; integration service is its own deployable in the same monorepo. |
-| Data | PostgreSQL (RDS Sydney) | Single relational source of truth. See `data-model.md`. |
+| Data | PostgreSQL, managed, Sydney region (Supabase `ap-southeast-2` or RDS) | Single relational source of truth, accessed via Prisma. With Supabase: app traffic through the Supavisor transaction pooler, migrations through `directUrl`. See `data-model.md`. |
 | Cache/locks | Redis (ElastiCache Sydney) | Slot holds (TTL ~5 min), claim windows, rate limits. |
 | Queues | BullMQ on Redis | Sync jobs, message journeys, webhook fan-out, dead-letter queues. |
 | Objects | S3 Sydney, SSE-KMS | Referral documents, intake responses. Pre-signed, short-lived URLs only. |
