@@ -1,0 +1,42 @@
+version: "3.9"
+
+# Local dev infrastructure — Postgres + Redis.
+# Matches the AU-hosted production services (Supabase + ElastiCache) in
+# schema and behaviour; not used in deployed environments.
+#
+# Usage:
+#   docker compose up -d
+#   # then in apps/api: DATABASE_URL=... pnpm dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: getbooked
+      POSTGRES_PASSWORD: getbooked
+      POSTGRES_DB: getbooked
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U getbooked"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
