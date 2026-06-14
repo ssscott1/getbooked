@@ -5,6 +5,7 @@ import { HealthModule } from "./modules/health/health.module.js";
 import { DirectoryModule } from "./modules/directory/directory.module.js";
 import { BookingModule } from "./modules/booking/booking.module.js";
 import { ReferralsModule } from "./modules/referrals/referrals.module.js";
+import { PaymentsModule } from "./modules/payments/payments.module.js";
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { ReferralsModule } from "./modules/referrals/referrals.module.js";
     DirectoryModule,
     BookingModule,
     ReferralsModule,
+    PaymentsModule,
   ],
   providers: [PrismaService],
   exports: [PrismaService],
